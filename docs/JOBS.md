@@ -45,6 +45,18 @@ skills live under `sandbox/skills/`.
     Deployed directly to the `rosa-agent-stage` namespace (see `job-ops-sop-pr-review-cron.yaml`),
     weekly on Fridays at 22:00 UTC (12:00 HST).
 
+* **`pmr-action-item`** (`sandbox/skills/pmr-action-item/SKILL.md`) — enumerates and processes
+    PMR (Post-Mortem Review) action items. Uses a two-tier architecture: an enumerator CronJob
+    queries Jira for open tickets labeled `PMR-AI-PILOT` and assigned to `rosa-agent`, then spawns
+    one worker Job per ticket. Each worker reads the ticket, identifies the target repo, syncs the
+    rosa-agent fork, implements the described change on a feature branch, runs the repo's test
+    suite, executes a mandatory security review (parallel subagents for secrets/injection/authz/
+    supply-chain risks plus the `/security-review` skill), and opens a PR if clean or comments
+    blockers on the ticket if not. Workers run in parallel but each processes exactly one ticket,
+    avoiding fork contention. Any access issue (403, missing credential, egress block) or unresolvable
+    blocker goes as a ticket comment, not a silent failure. Deployed directly to the `rosa-agent-stage`
+    namespace (see `job-pmr-action-item-enumerator-cron.yaml`), daily at 04:00 UTC.
+
 ## Scheduled jobs
 
 Three plain `batch/v1` CronJobs run the agent itself (registering the Hypershell
@@ -76,10 +88,12 @@ are needed.
 | `sop-improve` | weekdays, 22:00 UTC (`0 22 * * 1-5`) | `/job-sop-improve` | `rosa-agent-bot-0` |
 | `image-vuln-check` | nightly, 03:07 UTC (`7 3 * * *`) | `/job-image-vuln-check --image ... --repository ...`, once per target in `image-vuln-check-targets` (currently `openshift-online/rosa-agent` and `openshift/ocm-container`) | `rosa-agent-bot-1` |
 | `ops-sop-pr-review` | weekly, Fridays 22:00 UTC (`0 22 * * 5`) | `/job-ops-sop-pr-review` | `rosa-agent-bot-2` |
+| `pmr-action-item` (enumerator + workers) | daily, 04:00 UTC (`0 4 * * *`) | Enumerator queries Jira, spawns worker Jobs; each worker runs `/pmr-action-item <ISSUE-KEY>` | `rosa-agent-bot-3` |
 
 * [`job-sop-improve-cron.yaml`](../sandbox/skills/job-sop-improve/job-sop-improve-cron.yaml)
 * [`job-image-vuln-check-cron.yaml`](../sandbox/skills/job-image-vuln-check/job-image-vuln-check-cron.yaml)
 * [`job-ops-sop-pr-review-cron.yaml`](../sandbox/skills/job-ops-sop-pr-review/job-ops-sop-pr-review-cron.yaml)
+* [`job-pmr-action-item-enumerator-cron.yaml`](../sandbox/skills/pmr-action-item/job-pmr-action-item-enumerator-cron.yaml)
 
 ### Vault-injected credential
 
