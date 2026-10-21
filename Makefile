@@ -11,17 +11,23 @@ SANDBOX_TAG ?= $(shell git rev-parse --short=7 HEAD)
 SANDBOX_CONTAINERFILE := Containerfile
 SANDBOX_CONTEXT := .
 
-.PHONY: lint markdown-lint test sandbox-build sandbox-push require-sandbox-image
+.PHONY: lint markdown-lint check-placeholders test test-hack sandbox-build sandbox-push require-sandbox-image
 
 # Parent lint target: runs every linter. The OpenShift CI `ci/prow/lint`
 # presubmit runs `make lint`. Add new linters (shell, yaml, ...) as their own
 # targets and list them as prerequisites here.
-lint: markdown-lint
+lint: markdown-lint check-placeholders
 
 # Lint all Markdown docs. Requires markdownlint-cli2 (npm i -g markdownlint-cli2).
 # Rules live in .markdownlint-cli2.yaml.
 markdown-lint:
 	markdownlint-cli2 "**/*.md"
+
+# Fail if any tracked file contains raw credential-placeholder literals
+# that trip the supervisor's request-body marker guard.  Containerfile
+# and the checker itself are allowlisted.
+check-placeholders:
+	python3 hack/check_placeholder_literals.py
 
 # Run every skill's Python unit tests, then any bundled shell-script tests.
 # Stdlib unittest only - this image has no pip, so no pytest/coverage
@@ -43,6 +49,12 @@ test:
 			done; \
 		fi; \
 	done
+	$(MAKE) test-hack
+
+# Unit tests for Python scripts in hack/.
+test-hack:
+	@echo "=== hack/tests ==="; \
+	PYTHONPATH=hack python3 -m unittest discover -s hack/tests
 
 # Local build tag when no image is given, so `make sandbox-build` works without
 # a registry. A push always requires SANDBOX_IMAGE (see require-sandbox-image).
