@@ -11,12 +11,12 @@ SANDBOX_TAG ?= $(shell git rev-parse --short=7 HEAD)
 SANDBOX_CONTAINERFILE := Containerfile
 SANDBOX_CONTEXT := .
 
-.PHONY: lint markdown-lint check-placeholders test test-hack sandbox-build sandbox-push require-sandbox-image
+.PHONY: lint markdown-lint check-placeholders lint-sandbox test test-hack sandbox-build sandbox-push require-sandbox-image
 
 # Parent lint target: runs every linter. The OpenShift CI `ci/prow/lint`
 # presubmit runs `make lint`. Add new linters (shell, yaml, ...) as their own
 # targets and list them as prerequisites here.
-lint: markdown-lint check-placeholders
+lint: markdown-lint check-placeholders lint-sandbox
 
 # Lint all Markdown docs. Requires markdownlint-cli2 (npm i -g markdownlint-cli2).
 # Rules live in .markdownlint-cli2.yaml.
@@ -28,6 +28,17 @@ markdown-lint:
 # and the checker itself are allowlisted.
 check-placeholders:
 	python3 hack/check_placeholder_literals.py
+
+# Guard against re-introduction of removed Bedrock/inference.local config.
+# Covers sandbox files, docs, provider profiles, and policies. See MCS-324.
+SANDBOX_FORBIDDEN := inference\.local|ANTHROPIC_API_KEY|ANTHROPIC_BASE_URL|rosa-general-vertex|vertex-a([^i]|$$)
+SANDBOX_LINT_PATHS := sandbox/templates/ 'sandbox/skills/**/*-cron.yaml' README.md provider-profiles/ policies/ docs/
+lint-sandbox:
+	@git grep --extended-regexp --line-number '$(SANDBOX_FORBIDDEN)' -- $(SANDBOX_LINT_PATHS); \
+	rc=$$?; \
+	if [ $$rc -eq 0 ]; then echo "ERROR: forbidden Bedrock-era config found (MCS-324)"; exit 1; fi; \
+	if [ $$rc -ne 1 ]; then echo "ERROR: git grep failed (rc=$$rc)"; exit $$rc; fi; \
+	echo "lint-sandbox: OK"
 
 # Run every skill's Python unit tests, then any bundled shell-script tests.
 # Stdlib unittest only - this image has no pip, so no pytest/coverage
