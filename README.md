@@ -151,167 +151,37 @@ hypershell service-account create \
   --expiration <time>
 ```
 
-Service Account CLI:
+Once the service account is created, see [Interactive gateway access (openshellctl)](#interactive-gateway-access-openshellctl) below for how to register the gateway and run sandboxes from a laptop or CI environment.
+
+### Interactive gateway access (openshellctl)
+
+Once the gateway OIDC credentials are in your environment, register the gateway
+and interact with it via `openshellctl`. Token minting is automatic — there is
+no separate refresh step; `openshellctl` re-mints via client credentials on
+every invocation:
 
 ```bash
-if [ -z "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ]; then
-  OPENSHELL_OIDC_CLIENT_SECRET=$(vault kv get -mount=osd-sre -field="hypershell-oidc-client-secret" rosa-agent)
-  export OPENSHELL_OIDC_CLIENT_SECRET
-fi
+export OPENSHELL_GATEWAY_ENDPOINT="https://gw-openshell-02c8f9e0680fb903.hyp2-spoke1.infra.hypershell.app:443"
+export OPENSHELL_OIDC_ISSUER="https://keycloak.hyp2.infra.hypershell.app/realms/hypershell"
+export OPENSHELL_OIDC_CLIENT_ID="hs-sa-3L1eUHbsHIb3IC4dPUGBKvCCyZJ-3L1ectgVPHVUh1EFS7NvLC43FB9"
+export OPENSHELL_OIDC_AUDIENCE="rosa-agent-3L1eUHbsHIb3IC4dPUGBKvCCyZJ"
+export OPENSHELL_OIDC_CLIENT_SECRET=$(vault kv get -mount=osd-sre \
+  -field=hypershell-oidc-client-secret rosa-agent-konflux)
 
-openshell gateway add \
-  --name 'ROSA Agentic Devx-rosa-agent' \
-  --oidc-issuer https://keycloak-ambient-keycloak.apps.rosa.hcmais01ue1.s9m2.p3.openshiftapps.com/realms/ambient-code \
-  --oidc-client-id hs-sa-3I94YwZezpdI4AEzuxtJnsVYGVt-3J3ccZA4F2wyrrGaIHorqtywaiL \
-  --oidc-audience 'ROSA Agentic Devx-3I94YwZezpdI4AEzuxtJnsVYGVt' \
-  https://gw-openshell-46b2dff2b7232948.openshell.stage.devshift.net:443
-
-openshell -g 'ROSA Agentic Devx-rosa-agent' whoami --output json
+openshellctl gateway add "${OPENSHELL_GATEWAY_ENDPOINT}" --name rosa-agent
+openshellctl doctor \
+  --provider rosa-agent-github \
+  --provider rosa-agent-jira \
+  --provider rosa-agent-vertex
+openshellctl sandbox create \
+  --name "${USER}-$(date +%s)" \
+  --from quay.io/redhat-services-prod/rosa-tenant/rosa-agent/rosa-agent:latest \
+  --provider rosa-agent-vertex \
+  --provider rosa-agent-github \
+  --provider rosa-agent-jira \
+  --no-keep \
+  -- claude --dangerously-skip-permissions --print "Ping"
 ```
-
-```bash
-if [ -z "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ]; then
-  OPENSHELL_OIDC_CLIENT_SECRET=$(vault kv get -mount=osd-sre -field="hypershell-oidc-client-secret" rosa-agent)
-  export OPENSHELL_OIDC_CLIENT_SECRET
-fi
-
-ACCESS_TOKEN=$(printf '%s' "$OPENSHELL_OIDC_CLIENT_SECRET" | \
-  curl --fail --silent --show-error --request POST https://keycloak-ambient-keycloak.apps.rosa.hcmais01ue1.s9m2.p3.openshiftapps.com/realms/ambient-code/protocol/openid-connect/token \
-    --header 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode 'grant_type=client_credentials' \
-    --data-urlencode client_id=<client_id> $(vault kv get -mount=osd-sre -field="hypershell-oidc-client-id" rosa-agent)\
-    --data-urlencode client_secret@- | \
-  python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
-```
-
-Service account config:
-
-*NOTE:* This will overwrite your personal credentials for that gateway if you perform this task in the same
-environment you use the `openshell` cli tool.  This is an OpenShell limitation - the paths are hard-coded.
-You may prefer to work with service accounts in a container instead.
-
-```bash
-# Register gateway config for non-interactive use
-GW_NAME="<gateway_name>"
-GW_DIR="$HOME/.config/openshell/gateways/${GW_NAME}"
-
-ISSUER='https://keycloak-ambient-keycloak.apps.rosa.hcmais01ue1.s9m2.p3.openshiftapps.com/realms/ambient-code' # HyperShell
-
-ENDPOINT="<gateway_endpoint>" # From HyperShell Gateway-specific "details" tab
-CLIENT_ID="<service_account_client_id>" # From HyperShell Gateway-specifc "service accounts" tab
-
-mkdir -p "$GW_DIR"
-
-# Write gateway metadata
-cat > "$GW_DIR/metadata.json" <<EOF
-{
-  "name": "${GW_NAME}",
-  "gateway_endpoint": "${ENDPOINT}",
-  "is_remote": true,
-  "gateway_port": 0,
-  "auth_mode": "oidc",
-  "oidc_issuer": "${ISSURER}",
-  "oidc_client_id": "${CLIENT_ID}"
-}
-EOF
-chmod 600 "$GW_DIR/metadata.json"
-
-# Write the token
-cat > "$GW_DIR/oidc_token.json" <<EOF
-{
-  "access_token": "${ACCESS_TOKEN}",
-  "issuer": "${ISSURER}",
-  "client_id": "${CLIENT_ID}"
-}
-EOF
-chmod 600 "$GW_DIR/oidc_token.json"
-```
-
-Configuration can be validated with:
-
-```bash
-openshell -g $GW_NAME whoami
-```
-
-A working service account does NOT contain a `Name` field in the output.
-
-```txt
-Current User
-
-  Subject: 4da987ed-f980-49ae-99f4-3d374126c4d6
-  Provider: oidc
-  Roles: openshell-user, openshell-admin
-  Scopes: 
-```
-
-### Troubleshooting Service Account Issues
-
-`Error:   × No such file or directory (os error 2)` when running a sandbox
-
-This is likely the `openssh-clients` package missing from the execution environment.  Openshell uses ssh with a `ProxyCommand=/usr/bin/openshell` to securely communicate with a sandbox after creation, even when they are non-interactive (`--no-tty`).  No other SSH configuration is necessary other than installing the SSH Clients package.
-
-`Error:   × ssh exited with status exit status: 255`
-
-Ensure your JWT has refreshed right before running the command.  Theoretically it's a 300s TTL, but in practice it doesn't seem to behave like this.  Need more data.
-
-### Refreshing your gateway token (interactive use)
-
-Once a gateway is registered (see above), you interact with it directly through
-the `openshell` CLI, `-g <gateway_name>`:
-
-```bash
-GW_NAME='ROSA Agentic Devx-rosa-agent'
-
-openshell -g "$GW_NAME" whoami
-openshell -g "$GW_NAME" sandbox create --name demo
-```
-
-The `client_credentials` access token in `oidc_token.json` is short-lived and
-there is no refresh token — it must be re-minted. The
-[`hack/refresh_openshell_token.py`](hack/refresh_openshell_token.py) helper
-re-mints the token in place from the OIDC client secret, verifies with
-`openshell whoami`, and optionally execs into an openshell command.
-
-The script reads the client secret from the `OPENSHELL_OIDC_CLIENT_SECRET`
-environment variable. If that variable is not set, it falls back to reading
-from Vault automatically (prompting for OIDC browser login if your Vault
-token is expired):
-
-```bash
-# Vault path: osd-sre/rosa-agent, field: hypershell-oidc-client-secret
-# To set the secret explicitly (e.g. in CI or to skip the Vault fallback):
-export OPENSHELL_OIDC_CLIENT_SECRET=$(vault kv get -mount=osd-sre -field=hypershell-oidc-client-secret rosa-agent)
-
-# Or just let the script read Vault for you — it will prompt for OIDC
-# browser login if your Vault token (~/.vault-token) is expired:
-hack/refresh_openshell_token.py -g "$GW_NAME"
-```
-
-```bash
-# Re-mint the gateway's token file and verify with whoami:
-hack/refresh_openshell_token.py -g "$GW_NAME"
-
-# Only re-mint if fewer than 90s of life remain:
-hack/refresh_openshell_token.py -g "$GW_NAME" --if-expiring 90
-
-# Refresh the token, verify with whoami, then exec into openshell.
-# The script replaces itself with the openshell process (os.execv),
-# so openshell gets the real TTY and signals:
-hack/refresh_openshell_token.py -g "ROSA Agentic Devx-rosa-agent" \
-  --exec -- sandbox create --name "${USER}-$(date +%s)" \
-    --from quay.io/redhat-services-prod/rosa-tenant/rosa-agent/rosa-agent:latest \
-    --provider rosa-agent-vertex \
-    --provider rosa-agent-github --provider rosa-agent-jira \
-    --env JIRA_EMAIL="sd-sre-platform+rosa-agent@redhat.com" \
-    --env=JIRA_BASE_URL="https://redhat.atlassian.net" \
-    --no-keep --no-tty \
-    -- claude --dangerously-skip-permissions --print "Ping"
-```
-
-It reads config (issuer, client id) from the gateway's `metadata.json`, so no
-flags beyond `-g` are needed for a gateway registered as above. Run
-`hack/refresh_openshell_token.py --help` for the full flag list (Vault
-mount/path/field overrides, `--no-browser`, `--no-vault-login`, etc.).
 
 ## Github
 

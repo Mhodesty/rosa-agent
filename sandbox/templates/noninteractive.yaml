@@ -18,4 +18,5 @@ spec:
     JIRA_BASE_URL: https://redhat.atlassian.net
   sessionOpts:
     approvalMode: auto
-  tty: true
+    noKeep: true
+  tty: false
