@@ -37,7 +37,7 @@ except ImportError:
         "  venv:        python3 -m pip install pyyaml"
     )
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 HYPERSHELL_DIR = REPO_ROOT / ".hypershell"
 
 # The seven Kinds the RepositoryReconciler will actually import.
@@ -182,7 +182,7 @@ def check_resource(rel_path: str, doc: dict, index: int, findings: Findings) -> 
             where,
             f"{kind} is NOT importable -- it renders fine and is then silently "
             f"dropped by the import. Move it out of .hypershell/ "
-            f"(see hack/hypershell/ for the manually-applied manifests).",
+            f"(see docs/hypershell-gateways.md for the manual procedure).",
         )
     elif kind not in IMPORTABLE_KINDS:
         findings.error(

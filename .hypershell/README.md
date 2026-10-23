@@ -27,7 +27,7 @@ ignored by the import and **rejected outright** by `hsctl apply`:
 ```
 
 The same applies to any unrecognised key under `spec`. Describe resources in
-YAML comments, not in `metadata`. `make hypershell-validate` enforces both.
+YAML comments, not in `metadata`. `make check-hypershell` enforces both.
 
 ## Layout
 
@@ -77,20 +77,21 @@ particular `Repository`, `ManagedCluster`, `Role` and `RoleBinding` are
 skipped without an error — `Repository` specifically to prevent recursive
 self-registration.
 
-That silence is why configuration which cannot be imported lives in
-`hack/hypershell/` instead, applied by hand:
+That silence is why configuration which cannot be imported is applied by hand
+instead, following the runbooks in `docs/`:
 
 | Concern | Where | Why |
 | --- | --- | --- |
 | Gateway | here | importable |
-| Access grants (owner/admin/user) | `hack/hypershell/` | `RoleBinding` is not importable |
-| Service accounts | `hack/hypershell/` | not a declarative Kind at all; the client secret is returned once |
+| Access grants (owner/admin/user) | `docs/hypershell-gateways.md` | `RoleBinding` is not importable |
+| Service accounts | `docs/hypershell-gateways.md` | not a declarative Kind at all; the client secret is returned once |
+| Credential providers | `docs/hypershell-providers.md` | an OpenShell concept, not a HyperShell Kind |
 | Repository registration | MCS-224 | not importable; needs `platform:admin`, REST only |
 
 ## Validation
 
 ```sh
-make hypershell-validate
+make check-hypershell
 ```
 
 This renders every build root and checks that each rendered resource is an
