@@ -210,6 +210,7 @@ def check_resource(rel_path: str, doc: dict, index: int, findings: Findings) -> 
 JSON_STRING_FIELDS = {
     "Gateway": ("oidc", "route", "credential_driver"),
     "ProviderSpec": ("capability", "profile"),
+    "SandboxTemplate": ("policy",),
     "SecretSource": ("key_mappings",),
 }
 
@@ -350,6 +351,11 @@ KIND_SPEC_FIELDS = {
             "credential_driver",
         }
     ),
+    # SandboxTemplate is intentionally absent: the create-request spec field
+    # list has not yet been sourced from the api-server's model. Add an entry
+    # here once the accepted fields are verified against `hsctl create
+    # sandboxTemplate` on a live instance, to avoid false 400s from fields
+    # the model accepts but a hand-maintained list does not know about yet.
 }
 
 # Capability labels are validated server-side against a closed set of
@@ -420,6 +426,81 @@ def capability_value_valid(namespace: str, value: str) -> bool:
     return CAPABILITY_VALUE_RE.match(value) is not None
 
 
+def _policy_yaml_to_json(src: dict) -> str:
+    """Serialise a policies/*.yaml document as the JSON string stored in
+    SandboxTemplate.spec.policy.
+
+    The JSON is the YAML document serialised directly -- no field renaming, no
+    structural changes. Schema enforcement (unknown fields, removed fields such
+    as 'harness') is the responsibility of `openshellctl policy lint`, not this
+    validator. This function's sole job is to produce the canonical JSON form
+    used by check_sandbox_template_policy_drift to detect drift between
+    policies/default.yaml and the embedded spec.policy string.
+    """
+    return json.dumps(src, separators=(",", ":"))
+
+
+def check_sandbox_template_policy_drift(
+    findings: Findings,
+    *,
+    _template_path: Path | None = None,
+    _policy_path: Path | None = None,
+) -> None:
+    """Verify that the policy JSON embedded in the SandboxTemplate manifest
+    matches the current policies/default.yaml (after applying the toproto
+    transforms). A mismatch means the template was hand-edited or the source
+    drifted without a corresponding template update.
+
+    _template_path and _policy_path override the default locations; they exist
+    for unit tests only (leading underscore signals this).
+    """
+    template_path = _template_path or HYPERSHELL_DIR / "base/platform/sandbox-template.yaml"
+    policy_path = _policy_path or REPO_ROOT / "policies/default.yaml"
+
+    if not template_path.exists():
+        findings.error("drift-guard", f"{template_path} not found")
+        return
+    if not policy_path.exists():
+        findings.error("drift-guard", f"{policy_path} not found")
+        return
+
+    with open(template_path) as f:
+        tmpl = yaml.safe_load(f)
+    with open(policy_path) as f:
+        policy_src = yaml.safe_load(f)
+
+    embedded = ((tmpl or {}).get("spec") or {}).get("policy")
+    if not isinstance(embedded, str):
+        findings.error(
+            "drift-guard",
+            "SandboxTemplate spec.policy is not a string — cannot compare with policies/default.yaml",
+        )
+        return
+
+    try:
+        derived = _policy_yaml_to_json(policy_src or {})
+    except Exception as exc:
+        findings.error("drift-guard", f"failed to convert policies/default.yaml: {exc}")
+        return
+
+    try:
+        embedded_obj = json.loads(embedded)
+    except json.JSONDecodeError as exc:
+        findings.error(
+            "drift-guard",
+            f"SandboxTemplate spec.policy is not valid JSON: {exc}. "
+            f"Re-run: make generate-hypershell",
+        )
+        return
+    derived_obj = json.loads(derived)
+    if embedded_obj != derived_obj:
+        findings.error(
+            "drift-guard",
+            "SandboxTemplate spec.policy has drifted from policies/default.yaml. "
+            "Regenerate with: make generate-hypershell",
+        )
+
+
 def check_gateway_name(rel_path: str, docs: list[dict], findings: Findings) -> None:
     gateways = [d for d in docs if d.get("kind") == "Gateway"]
     if len(gateways) != 1:
@@ -445,6 +526,7 @@ def main() -> int:
     require_kustomize()
 
     findings = Findings()
+    check_sandbox_template_policy_drift(findings)
     for rel_path in EXPECTED_GATEWAY_NAME:
         docs = build(rel_path, findings)
         if docs is None:
